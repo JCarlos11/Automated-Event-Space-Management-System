@@ -1,0 +1,540 @@
+<script>
+// ══════════════════════════════════════════════════════════════
+// scripts.html — Lógica de la aplicación web (cliente)
+// ══════════════════════════════════════════════════════════════
+
+// ─── ESTADO GLOBAL ────────────────────────────────────────────
+const MESES = ['','ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO',
+               'JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'];
+
+const COLORES_TIPO = {
+  'EXPOSICION':    '#fff2cc', 'MONTAJE':       '#d5a6bd',
+  'DESMONTAJE':    '#d5a6bd', 'TALLER':        '#8e7cc3',
+  'CHARLA':        '#93c47d', 'PROYECCION':    '#00ffff',
+  'VIRTUAL':       '#ff0000', 'TRANSMISION':   '#9900ff',
+  'CONCIERTO':     '#00ff00', 'VISITA_GUIADA': '#ffff00',
+  'ESPECIAL':      '#ff9900', 'RADIO':         '#76a5af',
+  'PENDIENTE':     '#ff00ff', 'FESTIVAL':      '#4a86e8'
+};
+
+const ETIQUETAS_TIPO = {
+  'EXPOSICION': 'Exposición',       'MONTAJE': 'Montaje',
+  'DESMONTAJE': 'Desmontaje',       'TALLER': 'Taller',
+  'CHARLA': 'Charla',               'PROYECCION': 'Proyección',
+  'VIRTUAL': 'Virtual / Digital',   'TRANSMISION': 'Requiere Transmisión',
+  'CONCIERTO': 'Concierto / Radio', 'VISITA_GUIADA': 'Visita Guiada',
+  'ESPECIAL': 'Especial',           'RADIO': 'Radio',
+  'PENDIENTE': 'Pendiente',         'FESTIVAL': 'Festival'
+};
+
+let estadoApp = {
+  mesActual:  new Date().getMonth() + 1,
+  anio:       2026,
+  vistaActual: 'calendar',
+  eventos:    [],
+  filtroEspacio: ''
+};
+
+// ─── INICIO ───────────────────────────────────────────────────
+window.onload = () => {
+  actualizarStatusSync();
+  cargarVista('calendar');
+  inicializarLeyenda();
+  cargarEstadisticas();
+};
+
+// ─── NAVEGACIÓN ───────────────────────────────────────────────
+function cambiarVista(vista) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('view-' + vista).classList.add('active');
+  document.querySelector(`[data-view="${vista}"]`).classList.add('active');
+  estadoApp.vistaActual = vista;
+  cargarVista(vista);
+}
+
+function cargarVista(vista) {
+  switch (vista) {
+    case 'calendar':  cargarCalendario(); break;
+    case 'list':      cargarLista();      break;
+    case 'pendientes':cargarPendientes(); break;
+    case 'log':       cargarLog();        break;
+    case 'config':    cargarConfig();     break;
+  }
+}
+
+// ─── CALENDARIO MENSUAL ───────────────────────────────────────
+function cargarCalendario() {
+  document.getElementById('titulo-mes').textContent =
+    `${MESES[estadoApp.mesActual]} ${estadoApp.anio}`;
+  document.getElementById('calendar-grid').innerHTML = '<div class="loading">Cargando eventos</div>';
+
+  google.script.run
+    .withSuccessHandler(renderCalendario)
+    .withFailureHandler(manejarError)
+    .getEventosMes_WA(estadoApp.mesActual, estadoApp.anio);
+}
+
+function renderCalendario(eventos) {
+  estadoApp.eventos = eventos;
+  renderEstadisticas(eventos);
+
+  const filtro  = estadoApp.filtroEspacio;
+  const filtEv  = filtro ? eventos.filter(e => e.espacio === filtro) : eventos;
+
+  // Agrupar por día
+  const porDia  = {};
+  filtEv.forEach(ev => {
+    const fi  = new Date(ev.fechaInicio);
+    const dia = fi.getDate();
+    if (!porDia[dia]) porDia[dia] = [];
+    porDia[dia].push(ev);
+  });
+
+  const hoy = new Date();
+  const grid = document.getElementById('calendar-grid');
+  grid.innerHTML = '';
+
+  // Calcular días del mes
+  const diasMes = new Date(estadoApp.anio, estadoApp.mesActual, 0).getDate();
+  const diasSemana = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+
+  for (let dia = 1; dia <= diasMes; dia++) {
+    const fecha    = new Date(estadoApp.anio, estadoApp.mesActual - 1, dia);
+    const esHoy    = fecha.toDateString() === hoy.toDateString();
+    const evsDia   = (porDia[dia] || []).sort((a,b) => new Date(a.fechaInicio) - new Date(b.fechaInicio));
+
+    const card = document.createElement('div');
+    card.className = 'day-card';
+
+    const numClass = esHoy ? 'day-num hoy' : 'day-num';
+    card.innerHTML = `
+      <div class="day-header">
+        <div class="${numClass}">${dia}</div>
+        <div class="day-name">${diasSemana[fecha.getDay()]} ${dia}/${estadoApp.mesActual}</div>
+        <span style="margin-left:auto; font-size:11px; color:#a0aec0;">${evsDia.length} evento(s)</span>
+      </div>
+      <div class="events-list">${evsDia.length === 0
+        ? '<div style="padding:10px 14px; font-size:12px; color:#a0aec0;">Sin eventos</div>'
+        : evsDia.map(ev => renderEventoRow(ev)).join('')
+      }</div>`;
+
+    grid.appendChild(card);
+  }
+}
+
+function renderEventoRow(ev) {
+  const fi     = new Date(ev.fechaInicio);
+  const ff     = new Date(ev.fechaFin);
+  const hora   = ev.todoDia ? 'Todo el día' : `${pad(fi.getHours())}:${pad(fi.getMinutes())}`;
+  const tipo   = (ev.tipo || '').toUpperCase().replace('EXPOSICIÓN','EXPOSICION');
+  const color  = COLORES_TIPO[tipo] || '#e2e8f0';
+  const pend   = !ev.espacio || !ev.tipo;
+  const evJSON = encodeURIComponent(JSON.stringify(ev));
+
+  return `<div class="event-row ${pend ? 'event-pending' : ''}"
+               style="border-left: 4px solid ${color};"
+               onclick="mostrarDetalle('${evJSON}')">
+    <div class="event-time">${hora}</div>
+    <div class="event-info">
+      <div class="event-tipo">${ETIQUETAS_TIPO[tipo] || (ev.tipo || 'Tipo desconocido')}</div>
+      <div class="event-title">${ev.titulo}</div>
+      ${ev.espacio
+        ? `<span class="event-space">${ev.espacio}</span>`
+        : `<span class="event-space" style="background:#fed7d7; color:#9b2c2c;">⚠️ Sin espacio</span>`}
+    </div>
+  </div>`;
+}
+
+function renderEstadisticas(eventos) {
+  const total    = eventos.length;
+  const ubicados = eventos.filter(e => e.espacio && !e.espacio.includes('PENDIENTE')).length;
+  const pendEsp  = eventos.filter(e => !e.espacio || e.espacio.includes('PENDIENTE')).length;
+  const pendTipo = eventos.filter(e => !e.tipo  || e.tipo.includes('PENDIENTE')).length;
+
+  const porEsp = {};
+  eventos.forEach(e => { if (e.espacio && !e.espacio.includes('PENDIENTE')) porEsp[e.espacio] = (porEsp[e.espacio]||0)+1; });
+  const topEsp = Object.entries(porEsp).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}: ${v}`).join(' | ');
+
+  document.getElementById('stats-bar').innerHTML = `
+    <div class="stat-card"><div class="num">${total}</div><div class="lbl">Total eventos</div></div>
+    <div class="stat-card"><div class="num" style="color:#38a169">${ubicados}</div><div class="lbl">Ubicados</div></div>
+    <div class="stat-card"><div class="num" style="color:#e53e3e">${pendEsp}</div><div class="lbl">Sin espacio</div></div>
+    <div class="stat-card"><div class="num" style="color:#d69e2e">${pendTipo}</div><div class="lbl">Sin tipo</div></div>
+    ${topEsp ? `<div class="stat-card"><div class="num" style="font-size:12px">${topEsp}</div><div class="lbl">Top espacios</div></div>` : ''}
+  `;
+}
+
+function mesAnterior() {
+  if (estadoApp.mesActual <= 1) return;
+  estadoApp.mesActual--;
+  cargarCalendario();
+}
+function mesSiguiente() {
+  if (estadoApp.mesActual >= 12) return;
+  estadoApp.mesActual++;
+  cargarCalendario();
+}
+function filtrarPorEspacio() {
+  estadoApp.filtroEspacio = document.getElementById('filtro-espacio').value;
+  renderCalendario(estadoApp.eventos);
+}
+
+// ─── LISTA DE EVENTOS ─────────────────────────────────────────
+function cargarLista() {
+  const desde = document.getElementById('filtro-desde').value;
+  const hasta = document.getElementById('filtro-hasta').value;
+
+  // Por simplicidad cargamos el mes actual (extender para rango)
+  google.script.run
+    .withSuccessHandler(evs => renderLista(evs, desde, hasta))
+    .withFailureHandler(manejarError)
+    .getEventosMes_WA(estadoApp.mesActual, estadoApp.anio);
+}
+
+function renderLista(eventos, desde, hasta) {
+  const tipoFiltro = document.getElementById('filtro-tipo').value;
+  let evs = eventos;
+  if (tipoFiltro) evs = evs.filter(e => (e.tipo||'').toUpperCase().includes(tipoFiltro));
+  if (desde) evs = evs.filter(e => new Date(e.fechaInicio) >= new Date(desde));
+  if (hasta) evs = evs.filter(e => new Date(e.fechaInicio) <= new Date(hasta + 'T23:59:59'));
+
+  const contenedor = document.getElementById('lista-eventos');
+  if (evs.length === 0) {
+    contenedor.innerHTML = '<p style="padding:20px; color:#a0aec0;">Sin eventos para los filtros seleccionados.</p>';
+    return;
+  }
+
+  let html = `<table class="tabla-gen">
+    <thead><tr>
+      <th>Fecha / Hora</th><th>Título</th><th>Espacio</th><th>Tipo</th><th>Reqs. Técnicos</th>
+    </tr></thead><tbody>`;
+
+  evs.forEach(ev => {
+    const fi   = new Date(ev.fechaInicio);
+    const tipo = (ev.tipo || '').toUpperCase().replace('EXPOSICIÓN','EXPOSICION');
+    const bg   = COLORES_TIPO[tipo] || 'transparent';
+    const evJSON = encodeURIComponent(JSON.stringify(ev));
+    html += `<tr onclick="mostrarDetalle('${evJSON}')" style="cursor:pointer">
+      <td style="white-space:nowrap">${fi.toLocaleDateString('es-MX')}<br>
+          <small>${ev.todoDia ? 'Todo el día' : fi.toLocaleTimeString('es-MX', {hour:'2-digit',minute:'2-digit'})}</small></td>
+      <td><strong>${ev.titulo}</strong></td>
+      <td>${ev.espacio || '<span style="color:#e53e3e">⚠️</span>'}</td>
+      <td><span style="padding:2px 8px; border-radius:4px; background:${bg}; font-size:11px; font-weight:700">
+          ${ETIQUETAS_TIPO[tipo] || ev.tipo || '⚠️'}</span></td>
+      <td style="font-size:11px; color:#718096">${ev.reqTecnicos || '—'}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  contenedor.innerHTML = html;
+}
+
+// ─── BÚSQUEDA ─────────────────────────────────────────────────
+function buscar() {
+  const termino = document.getElementById('input-busqueda').value.trim();
+  if (!termino) return;
+
+  document.getElementById('resultados-busqueda').innerHTML = '<div class="loading">Buscando</div>';
+  google.script.run
+    .withSuccessHandler(renderResultados)
+    .withFailureHandler(manejarError)
+    .buscar_WA(termino);
+}
+
+function renderResultados(resultados) {
+  const contenedor = document.getElementById('resultados-busqueda');
+  if (resultados.length === 0) {
+    contenedor.innerHTML = '<p style="padding:20px; color:#a0aec0;">No se encontraron resultados.</p>';
+    return;
+  }
+  let html = `<p style="margin-bottom:10px; color:#718096; font-size:13px;">${resultados.length} resultado(s)</p>
+  <table class="tabla-gen"><thead><tr>
+    <th>ID</th><th>Título</th><th>Fecha</th><th>Espacio</th><th>Tipo</th><th>Acción</th>
+  </tr></thead><tbody>`;
+
+  resultados.forEach(ev => {
+    const evJSON = encodeURIComponent(JSON.stringify(ev));
+    html += `<tr onclick="mostrarDetalle('${evJSON}')" style="cursor:pointer">
+      <td style="font-size:10px; color:#a0aec0">${ev.id}</td>
+      <td><strong>${ev.titulo}</strong></td>
+      <td>${ev.fechaInicio}</td>
+      <td>${ev.espacio || '⚠️'}</td>
+      <td>${ev.tipo || '⚠️'}</td>
+      <td><span class="badge badge-${(ev.accion||'new').toLowerCase().replace('nuevo','new').replace('modificado','mod').replace('eliminado','del')}">${ev.accion||''}</span></td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  contenedor.innerHTML = html;
+}
+
+// ─── PENDIENTES ───────────────────────────────────────────────
+function cargarPendientes() {
+  document.getElementById('tabla-pendientes').innerHTML = '<div class="loading">Cargando</div>';
+  google.script.run
+    .withSuccessHandler(renderPendientes)
+    .withFailureHandler(manejarError)
+    .getPendientes_WA();
+}
+
+function renderPendientes(pendientes) {
+  const contenedor = document.getElementById('tabla-pendientes');
+  if (pendientes.length === 0) {
+    contenedor.innerHTML = '<div style="padding:24px; text-align:center; color:#38a169; font-size:16px;">✅ ¡Sin pendientes! Todos los eventos están clasificados.</div>';
+    return;
+  }
+  let html = `<p style="color:#e53e3e; margin-bottom:12px; font-weight:600;">${pendientes.length} evento(s) pendiente(s)</p>
+  <table class="tabla-gen"><thead><tr>
+    <th>Título</th><th>Fecha</th><th>Espacio</th><th>Tipo</th><th>Problema</th><th>Descripción</th>
+  </tr></thead><tbody>`;
+  pendientes.forEach(ev => {
+    html += `<tr style="background:#fff5f5">
+      <td><strong>${ev.titulo}</strong></td>
+      <td>${ev.fechaInicio}</td>
+      <td>${ev.espacio === '❌' ? '<span style="color:#e53e3e">❌ Sin espacio</span>' : ev.espacio}</td>
+      <td>${ev.tipo === '❌' ? '<span style="color:#e53e3e">❌ Sin tipo</span>' : ev.tipo}</td>
+      <td style="color:#e53e3e; font-size:12px">${ev.problema}</td>
+      <td style="font-size:11px; color:#718096; max-width:200px; overflow:hidden; text-overflow:ellipsis">${ev.descripcion}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  contenedor.innerHTML = html;
+}
+
+// ─── REGISTRO DE CAMBIOS ──────────────────────────────────────
+function cargarLog() {
+  const limite = parseInt(document.getElementById('filtro-log').value);
+  document.getElementById('tabla-log').innerHTML = '<div class="loading">Cargando</div>';
+  google.script.run
+    .withSuccessHandler(renderLog)
+    .withFailureHandler(manejarError)
+    .getRegistroCambios_WA(limite);
+}
+
+function renderLog(entradas) {
+  if (entradas.length === 0) {
+    document.getElementById('tabla-log').innerHTML = '<p style="padding:20px; color:#a0aec0;">Sin entradas en el registro.</p>';
+    return;
+  }
+  const iconos = { INFO: '📋', ERROR: '❌', CAMBIO: '🔄', ALERTA: '⚠️' };
+  let html = `<table class="tabla-gen"><thead><tr>
+    <th>Fecha y hora</th><th>Tipo</th><th>Mensaje</th>
+  </tr></thead><tbody>`;
+  entradas.forEach(e => {
+    const bgMap = { INFO:'#fff', ERROR:'#fff5f5', CAMBIO:'#f0fff4', ALERTA:'#fffff0' };
+    html += `<tr style="background:${bgMap[e.tipo]||'#fff'}">
+      <td style="white-space:nowrap; font-size:12px">${e.fecha}</td>
+      <td>${iconos[e.tipo]||''} <strong>${e.tipo}</strong></td>
+      <td style="font-size:13px">${e.mensaje}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('tabla-log').innerHTML = html;
+}
+
+// ─── LEYENDA ──────────────────────────────────────────────────
+function inicializarLeyenda() {
+  const leyenda = {
+    'EXPOSICIÓN':              '#fff2cc',
+    'MONTAJE / DESMONTAJE':    '#d5a6bd',
+    'TALLER':                  '#8e7cc3',
+    'CHARLA':                  '#93c47d',
+    'PROYECCIÓN':              '#00ffff',
+    'VIRTUAL / DIGITAL':       '#ff0000',
+    'REQUIERE TRANSMISIÓN':    '#9900ff',
+    'CONCIERTO / RADIO':       '#00ff00',
+    'VISITA GUIADA':           '#ffff00',
+    'ESPECIAL':                '#ff9900',
+    'RADIO / PODCAST':         '#76a5af',
+    'PENDIENTE':               '#ff00ff',
+    'FESTIVAL':                '#4a86e8'
+  };
+  const contenedor = document.getElementById('tabla-leyenda');
+  contenedor.innerHTML = Object.entries(leyenda).map(([label, color]) => `
+    <div class="leyenda-item">
+      <div class="leyenda-color" style="background:${color}"></div>
+      <div>
+        <div class="leyenda-label">${label}</div>
+        <div class="leyenda-hex">${color}</div>
+      </div>
+    </div>`).join('');
+}
+
+// ─── CONFIGURACIÓN ────────────────────────────────────────────
+function cargarConfig() {
+  document.getElementById('panel-config').innerHTML = '<div class="loading">Cargando</div>';
+  google.script.run
+    .withSuccessHandler(renderConfig)
+    .withFailureHandler(manejarError)
+    .getConfig_WA();
+}
+
+function renderConfig(config) {
+  const desc = {
+    CALENDAR_ID:   'ID del Calendario de Google',
+    EMAIL_REPORTES:'Email para reportes automáticos',
+    INTERVALO_SYNC:'Intervalo de sincronización (minutos)',
+    ULTIMA_SYNC:   'Última sincronización exitosa',
+    PENDIENTES_COUNT: 'Eventos pendientes de clasificar',
+    TRASLAPOS_COUNT:  'Traslapos detectados'
+  };
+  let html = '';
+  Object.entries(config).forEach(([k, v]) => {
+    const esEditable = !['ULTIMA_SYNC','PENDIENTES_COUNT','TRASLAPOS_COUNT'].includes(k);
+    html += `<div class="config-row">
+      <div class="config-key">${desc[k] || k}</div>
+      ${esEditable
+        ? `<input class="config-input" id="cfg-${k}" value="${v}">`
+        : `<div style="font-size:13px; color:#4a5568; padding:7px 10px">${v}</div>`}
+      ${esEditable
+        ? `<button onclick="guardarConfig('${k}')" class="btn-primary">Guardar</button>`
+        : '<div></div>'}
+    </div>`;
+  });
+  document.getElementById('panel-config').innerHTML = html || '<p>Sin configuración cargada.</p>';
+}
+
+function guardarConfig(clave) {
+  const valor = document.getElementById('cfg-' + clave).value;
+  google.script.run
+    .withSuccessHandler(() => mostrarToast('✅ Configuración guardada'))
+    .withFailureHandler(manejarError)
+    .setConfig_WA(clave, valor);
+}
+
+// ─── SINCRONIZACIÓN ───────────────────────────────────────────
+function sincronizar() {
+  document.getElementById('sync-status').textContent = '⏳ Sincronizando...';
+  google.script.run
+    .withSuccessHandler(res => {
+      actualizarStatusSync();
+      mostrarToast(res.ok
+        ? `✅ Sync OK — ${res.cambios.nuevos.length} nuevos, ${res.cambios.modificados.length} mod`
+        : `❌ Error: ${res.error}`);
+      if (estadoApp.vistaActual === 'calendar') cargarCalendario();
+    })
+    .withFailureHandler(manejarError)
+    .sincronizarManual_WA();
+}
+
+function actualizarStatusSync() {
+  google.script.run
+    .withSuccessHandler(cfg => {
+      document.getElementById('sync-status').textContent =
+        `Sync: ${cfg.ULTIMA_SYNC || 'Nunca'} | ⚠️ ${cfg.PENDIENTES_COUNT || 0}`;
+    })
+    .withFailureHandler(() => {})
+    .getConfig_WA();
+}
+
+function cargarEstadisticas() {
+  google.script.run
+    .withSuccessHandler(stats => {
+      if (estadoApp.vistaActual === 'calendar') return; // lo hace renderCalendario
+    })
+    .withFailureHandler(() => {})
+    .getEstadisticas_WA();
+}
+
+// ─── REPORTE POR PERÍODO ──────────────────────────────────────
+function exportarReporte() {
+  const desde = document.getElementById('filtro-desde').value || new Date().toISOString().split('T')[0];
+  const hasta = document.getElementById('filtro-hasta').value || new Date().toISOString().split('T')[0];
+  const email = prompt('¿A qué correo enviar el reporte?', '');
+  if (!email) return;
+  google.script.run
+    .withSuccessHandler(r => mostrarToast(r.mensaje))
+    .withFailureHandler(manejarError)
+    .enviarReportePeriodo_WA(desde, hasta, email);
+}
+
+function regenerarMes() {
+  const mes = prompt('¿Qué mes regenerar? (1-12)', estadoApp.mesActual);
+  if (!mes) return;
+  mostrarToast('⏳ Regenerando hoja...');
+  google.script.run
+    .withSuccessHandler(() => mostrarToast(`✅ Hoja de ${MESES[parseInt(mes)]} regenerada`))
+    .withFailureHandler(manejarError)
+    .regenerarMes_WA(mes);
+}
+
+function enviarReportePeriodo() {
+  const desde = prompt('Fecha inicio (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+  const hasta = prompt('Fecha fin (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+  const email = prompt('Correo destinatario:');
+  if (!desde || !hasta || !email) return;
+  google.script.run
+    .withSuccessHandler(r => mostrarToast(r.mensaje))
+    .withFailureHandler(manejarError)
+    .enviarReportePeriodo_WA(desde, hasta, email);
+}
+
+// ─── MODAL DE DETALLE ─────────────────────────────────────────
+function mostrarDetalle(evJSON) {
+  const ev = JSON.parse(decodeURIComponent(evJSON));
+  const fi = new Date(ev.fechaInicio);
+  const ff = new Date(ev.fechaFin);
+  const tipo = (ev.tipo || '').toUpperCase().replace('EXPOSICIÓN','EXPOSICION');
+  const color = COLORES_TIPO[tipo] || '#e2e8f0';
+
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-tipo" style="color:${color}; background:rgba(0,0,0,.08); padding:4px 8px; border-radius:4px; display:inline-block">
+      ${ETIQUETAS_TIPO[tipo] || ev.tipo || 'Tipo desconocido'}
+    </div>
+    <div class="modal-titulo">${ev.titulo}</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+      <div class="modal-field">
+        <div class="lbl">📅 Fecha inicio</div>
+        <div class="val">${fi.toLocaleDateString('es-MX', {weekday:'long',year:'numeric',month:'long',day:'numeric'})}</div>
+      </div>
+      <div class="modal-field">
+        <div class="lbl">⏰ Hora</div>
+        <div class="val">${ev.todoDia ? 'Todo el día (11:00 – 18:00)' : fi.toLocaleTimeString('es-MX', {hour:'2-digit',minute:'2-digit'}) + ' – ' + ff.toLocaleTimeString('es-MX', {hour:'2-digit',minute:'2-digit'})}</div>
+      </div>
+    </div>
+    <div class="modal-field">
+      <div class="lbl">📍 Espacio</div>
+      <div class="val">${ev.espacio || '<span style="color:#e53e3e">⚠️ Sin espacio identificado</span>'}</div>
+    </div>
+    ${ev.descripcion ? `<div class="modal-field">
+      <div class="lbl">📝 Descripción</div>
+      <div class="val">${ev.descripcion}</div>
+    </div>` : ''}
+    ${ev.reqTecnicos ? `<div class="modal-field">
+      <div class="lbl">🔧 Requerimientos técnicos</div>
+      <div class="req-box">${ev.reqTecnicos}</div>
+    </div>` : ''}
+    <div class="modal-field">
+      <div class="lbl">🆔 ID del evento</div>
+      <div class="val" style="font-size:11px; color:#a0aec0">${ev.id}</div>
+    </div>
+  `;
+
+  document.getElementById('modal').classList.add('open');
+}
+
+function cerrarModal(e) {
+  if (!e || e.target.id === 'modal' || e.target.classList.contains('modal-close')) {
+    document.getElementById('modal').classList.remove('open');
+  }
+}
+
+// ─── UTILIDADES ───────────────────────────────────────────────
+function mostrarToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+function manejarError(err) {
+  console.error(err);
+  mostrarToast('❌ Error: ' + (err.message || err));
+  document.querySelectorAll('.loading').forEach(el => {
+    el.textContent = 'Error al cargar. Intenta de nuevo.';
+    el.style.color = '#e53e3e';
+  });
+}
+
+function pad(n) { return String(n).padStart(2, '0'); }
+</script>

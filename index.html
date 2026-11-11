@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PROGRAMACIÓN 2026</title>
+  <?!= include('estilos') ?>
+</head>
+<body>
+
+<!-- ── BARRA LATERAL ──────────────────────────────────────── -->
+<nav id="sidebar">
+  <div class="sidebar-header">
+    <span class="icon">📅</span>
+    <span class="brand">PROG 2026</span>
+  </div>
+  <ul class="nav-list">
+    <li class="nav-item active" data-view="calendar"    onclick="cambiarVista('calendar')">📆 Calendario</li>
+    <li class="nav-item"        data-view="list"        onclick="cambiarVista('list')">📋 Lista</li>
+    <li class="nav-item"        data-view="search"      onclick="cambiarVista('search')">🔍 Búsqueda</li>
+    <li class="nav-item"        data-view="pendientes"  onclick="cambiarVista('pendientes')">⚠️ Pendientes</li>
+    <li class="nav-item"        data-view="log"         onclick="cambiarVista('log')">📜 Registro</li>
+    <li class="nav-item"        data-view="legend"      onclick="cambiarVista('legend')">🎨 Leyenda</li>
+    <li class="nav-item"        data-view="config"      onclick="cambiarVista('config')">⚙️ Configuración</li>
+  </ul>
+  <div class="sync-box">
+    <button class="btn-sync" onclick="sincronizar()">🔄 Sincronizar</button>
+    <div id="sync-status" class="sync-status">Cargando...</div>
+  </div>
+</nav>
+
+<!-- ── CONTENIDO PRINCIPAL ────────────────────────────────── -->
+<main id="main-content">
+
+  <!-- VISTA: CALENDARIO -->
+  <div id="view-calendar" class="view active">
+    <div class="view-header">
+      <button onclick="mesAnterior()">&larr;</button>
+      <h2 id="titulo-mes">Cargando…</h2>
+      <button onclick="mesSiguiente()">&rarr;</button>
+      <select id="filtro-espacio" onchange="filtrarPorEspacio()">
+        <option value="">Todos los espacios</option>
+        <option value="POLIVALENTE">Polivalente</option>
+        <option value="TALLERES">Talleres/Mecatrónica</option>
+        <option value="CINE">Cine</option>
+        <option value="TERRAZA">Terraza</option>
+        <option value="MEMORIAL">Memorial</option>
+        <option value="VIRTUAL">Virtual</option>
+        <option value="EXTRAMUROS">Extramuros</option>
+      </select>
+    </div>
+    <div id="stats-bar" class="stats-bar"></div>
+    <div id="calendar-grid" class="calendar-grid"></div>
+  </div>
+
+  <!-- VISTA: LISTA -->
+  <div id="view-list" class="view">
+    <div class="view-header">
+      <h2>Lista de Eventos</h2>
+      <div class="filtros">
+        <input type="date" id="filtro-desde" onchange="cargarLista()">
+        <input type="date" id="filtro-hasta" onchange="cargarLista()">
+        <select id="filtro-tipo" onchange="cargarLista()">
+          <option value="">Todos los tipos</option>
+          <option value="EXPOSICION">Exposición</option>
+          <option value="TALLER">Taller</option>
+          <option value="CHARLA">Charla</option>
+          <option value="PROYECCION">Proyección</option>
+          <option value="CONCIERTO">Concierto</option>
+          <option value="FESTIVAL">Festival</option>
+          <option value="VISITA_GUIADA">Visita guiada</option>
+          <option value="ESPECIAL">Especial</option>
+        </select>
+        <button onclick="exportarReporte()">📧 Enviar Reporte</button>
+      </div>
+    </div>
+    <div id="lista-eventos"></div>
+  </div>
+
+  <!-- VISTA: BÚSQUEDA -->
+  <div id="view-search" class="view">
+    <div class="view-header">
+      <h2>Búsqueda de Eventos</h2>
+    </div>
+    <div class="search-box">
+      <input type="text" id="input-busqueda" placeholder="Buscar por ID de actividad o título…"
+             onkeyup="if(event.key==='Enter') buscar()">
+      <button onclick="buscar()">🔍 Buscar</button>
+    </div>
+    <div id="resultados-busqueda"></div>
+  </div>
+
+  <!-- VISTA: PENDIENTES -->
+  <div id="view-pendientes" class="view">
+    <div class="view-header">
+      <h2>⚠️ Eventos Pendientes de Clasificar</h2>
+      <p class="subtitle">Eventos sin espacio o tipo de actividad identificado.</p>
+    </div>
+    <div id="tabla-pendientes"></div>
+  </div>
+
+  <!-- VISTA: REGISTRO -->
+  <div id="view-log" class="view">
+    <div class="view-header">
+      <h2>📜 Registro de Cambios</h2>
+      <select id="filtro-log" onchange="cargarLog()">
+        <option value="50">Últimas 50 entradas</option>
+        <option value="100">Últimas 100</option>
+        <option value="200">Últimas 200</option>
+      </select>
+    </div>
+    <div id="tabla-log"></div>
+  </div>
+
+  <!-- VISTA: LEYENDA -->
+  <div id="view-legend" class="view">
+    <div class="view-header"><h2>🎨 Leyenda de Colores</h2></div>
+    <div id="tabla-leyenda" class="leyenda-grid"></div>
+  </div>
+
+  <!-- VISTA: CONFIGURACIÓN -->
+  <div id="view-config" class="view">
+    <div class="view-header"><h2>⚙️ Configuración del Sistema</h2></div>
+    <div id="panel-config"></div>
+    <div class="config-actions">
+      <h3>Acciones</h3>
+      <button onclick="regenerarMes()">🔄 Regenerar hoja mensual</button>
+      <button onclick="enviarReportePeriodo()">📧 Enviar reporte por período</button>
+    </div>
+  </div>
+
+</main>
+
+<!-- ── MODAL DE DETALLE DE EVENTO ─────────────────────────── -->
+<div id="modal" class="modal-overlay" onclick="cerrarModal(event)">
+  <div class="modal-box">
+    <button class="modal-close" onclick="cerrarModal()">✕</button>
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<!-- ── TOAST DE NOTIFICACIONES ────────────────────────────── -->
+<div id="toast" class="toast"></div>
+
+<?!= include('scripts') ?>
+</body>
+</html>
